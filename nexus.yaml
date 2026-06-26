@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.serviceAccount.name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # Workload Identity binding: maps K8s SA → GCP SA for GCS access (no key files needed)
+    iam.gke.io/gcp-service-account: {{ .Values.serviceAccount.gcpServiceAccount }}
+---
+# PersistentVolumeClaim: stores Nexus's local data (config, DB)
+# Artifacts themselves go to GCS, but Nexus still needs local disk for metadata
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nexus-pvc
+  namespace: {{ .Release.Namespace }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  storageClassName: {{ .Values.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+---
+# Service: exposes Nexus to the outside world
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus-service
+  namespace: {{ .Release.Namespace }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: nexus
+  ports:
+    - protocol: TCP
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+---
+# Deployment: runs the custom Nexus container
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexus
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1   # Nexus is stateful; only run 1 replica with a PVC
+  selector:
+    matchLabels:
+      app: nexus
+  template:
+    metadata:
+      labels:
+        app: nexus
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        fsGroup: 200    # Nexus runs as UID 200 inside the container
+      containers:
+        - name: nexus
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8081
+          env:
+            # Tell the GCS plugin which bucket to use
+            - name: NEXUS_BLOB_STORE_GCS_BUCKET
+              value: {{ .Values.gcs.bucketName }}
+          resources:
+            requests:
+              memory: {{ .Values.resources.requests.memory }}
+              cpu: {{ .Values.resources.requests.cpu }}
+            limits:
+              memory: {{ .Values.resources.limits.memory }}
+              cpu: {{ .Values.resources.limits.cpu }}
+          volumeMounts:
+            - name: nexus-data
+              mountPath: /nexus-data
+          # Nexus takes ~60s to start; these probes prevent premature traffic
+          livenessProbe:
+            httpGet:
+              path: /service/rest/v1/status
+              port: 8081
+            initialDelaySeconds: 120
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /service/rest/v1/status
+              port: 8081
+            initialDelaySeconds: 90
+            periodSeconds: 10
+      volumes:
+        - name: nexus-data
+          persistentVolumeClaim:
+            claimName: nexus-pvc
