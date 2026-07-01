@@ -1,0 +1,29 @@
+image:
+  repository: gcr.io/YOUR_PROJECT_ID/nexus-gcs
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: LoadBalancer
+  port: 8081
+  targetPort: 8081
+
+persistence:
+  storageClass: "standard"
+  accessMode: ReadWriteOnce
+  size: 20Gi
+
+gcs:
+  bucketName: "nexus-artifacts-bucket"
+
+serviceAccount:
+  name: nexus-sa
+  gcpServiceAccount: "nexus-gcs-sa@YOUR_PROJECT_ID.iam.gserviceaccount.com"
+
+resources:
+  requests:
+    memory: "2Gi"
+    cpu: "500m"
+  limits:
+    memory: "4Gi"
+    cpu: "2"
